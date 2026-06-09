@@ -1,0 +1,24 @@
+# environment variables
+.env
+.env.local
+.env.production
+
+# supabase CLI
+supabase/.temp/
+supabase/.branches/
+.supabase/
+
+# logs
+*.log
+npm-debug.log*
+
+# macOS
+.DS_Store
+
+# editors
+.vscode/
+.idea/
+
+# Claude / agents
+.claude/
+.agents/
