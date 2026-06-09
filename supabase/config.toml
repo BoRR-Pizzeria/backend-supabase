@@ -1,0 +1,36 @@
+# Config del stack local del Supabase CLI (`supabase start`) para dev sobre ZeroTier.
+# Para PROD se usa el proyecto cloud (ver README → "link" + "db push").
+# Si tu versión del CLI rechaza alguna clave, corré `supabase init` y portá estos valores.
+
+project_id = "bsborr"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+# Origenes de la malla ZeroTier (Front y BFF). site_url se usa en links de email;
+# en el flujo password vía BFF no es crítico, pero lo dejamos coherente.
+site_url = "http://10.144.0.3:4321"
+additional_redirect_urls = ["http://10.144.0.3:4321", "http://10.144.0.2:8788"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+# En dev: sin confirmación de email, así signUp + signIn funcionan directo
+# (el BFF hace el flujo password). Activar en prod.
+enable_confirmations = false

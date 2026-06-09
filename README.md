@@ -12,14 +12,40 @@ Forma parte del split en 3 repos:
 
 ## Proyecto Supabase
 
-- Project ref: `rikafvgarvjhnbkauxzi`
-- URL: `https://rikafvgarvjhnbkauxzi.supabase.co`
+- **Dev**: stack local del CLI (`supabase start`), expuesto en la malla ZeroTier como `Supa = 10.144.0.1`.
+- **Prod**: proyecto cloud — ref `rikafvgarvjhnbkauxzi`, URL `https://rikafvgarvjhnbkauxzi.supabase.co`.
 
-El proyecto se gestiona **remoto** (cloud), no hay `supabase start` local. Para operar con la CLI:
+### Dev local sobre ZeroTier (nodo 10.144.0.1)
+
+El stack local lo configura [`supabase/config.toml`](./supabase/config.toml) (API en `:54321`,
+confirmación de email off para dev). El **BFF (BFFBORR)** apunta a `http://10.144.0.1:54321`.
+
+```bash
+supabase start            # levanta el stack local (Docker)
+supabase db reset         # aplica TODAS las migraciones + seed al stack local
+supabase status           # muestra API URL y la anon key (ponela en el .env del BFF)
+```
+
+**Exponer sobre ZeroTier**: el CLI mapea los puertos del lado del host. Probá desde otro nodo:
+
+```bash
+curl http://10.144.0.1:54321/rest/v1/   # debería responder (401/200), no timeout
+```
+
+Si da timeout (el CLI quedó atado a `127.0.0.1`), reenviá el puerto en el nodo .1, por ejemplo:
+
+```bash
+socat TCP-LISTEN:54321,fork,reuseaddr,bind=10.144.0.1 TCP:127.0.0.1:54321
+```
+
+> La anon key local default del CLI ya está pre-cargada en `BFFBORR/.env.example`. Si tu
+> `supabase status` muestra otra (JWT secret distinto), reemplazala en el `.env`/`.dev.vars` del BFF.
+
+### Prod (cloud)
 
 ```bash
 supabase link --project-ref rikafvgarvjhnbkauxzi
-supabase db push          # aplica migraciones pendientes al cloud
+supabase db push           # aplica migraciones pendientes al cloud
 supabase db reset --linked # resetea y reaplica todo + seed (¡destructivo!)
 ```
 
