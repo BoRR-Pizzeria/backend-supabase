@@ -1,0 +1,1378 @@
+{
+  "info": {
+    "_postman_id": "b5b0bb00-0000-4000-8000-bsbo0rrcol01",
+    "name": "BSBORR — Supabase API",
+    "description": "Colección de todos los endpoints expuestos por el backend Supabase de BoRR (BSBORR).\n\nFuente: `supabase/migrations/0001..0007`. Cubre:\n- **Auth (GoTrue)** `/auth/v1`: signup, signup anónimo, login, refresh, user, logout, recover.\n- **REST (PostgREST)** `/rest/v1`: todas las tablas con RLS, más las vistas `ingredient_stock_by_shop`, `profiles_public` y los feeds `pizzas_house_feed` / `pizzas_community_feed` (0006, con price_cents calculado en el back).\n- **RPC** `/rest/v1/rpc`: `current_app_role`, `is_role` y `place_order` (0006, creación atómica de pedido). Las funciones trigger-only tienen EXECUTE revocado en `0004_security_fixes.sql`, por eso NO están.\n\nLos requests marcados con ★ son los que consume el front (vía el BFF) en producción; ver `doc/endpoints-status.md` para implementados vs por finalizar.\n\n## Uso\n1. Importá esta colección + un environment (`BSBORR.prod` para el cloud o `BSBORR.local` para el stack del CLI).\n2. Completá `apikey` con la **anon key JWT** (`eyJ...`), NO la publishable key (`sb_publishable_...`): la colección la usa también como Bearer de fallback para el acceso anónimo, y sólo un JWT sirve ahí. En prod sale de Project Settings → API (legacy `anon`); en local de `supabase status` (campo ANON_KEY) — ya viene cargada en el env local.\n3. Ejecutá **01 · Auth → Login (password)** (o **Signup**): guarda automáticamente `accessToken`, `refreshToken` y `userId` en las variables de la colección.\n4. El resto de los requests heredan `apikey` + `Authorization: Bearer` vía un pre-request a nivel colección (precedencia: environment > colección).\n\n> Recordá: el cliente real pasa por el BFF (BFFBORR), que reenvía el JWT. Esta colección habla directo con Supabase para probar/documentar el contrato. RLS aplica según el rol del usuario logueado.\n\n## Notas sobre RLS / roles\nMuchos endpoints requieren un rol concreto (`admin`, `pizzero`, `delivery`). Con un usuario `customer` recién creado, los requests de **09 · Stock** y **11 · Admin** devuelven 403 (escritura) y los de **08 · Delivery** requieren un `deliveryId` de un delivery asignado. Eso es esperado: la policy filtra, no la URL.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Inyecta apikey + Authorization en cada request (PostgREST y GoTrue los requieren).",
+          "const getVar = (k) => pm.environment.get(k) || pm.collectionVariables.get(k);",
+          "const apikey = getVar('apikey');",
+          "if (apikey && !pm.request.headers.has('apikey')) {",
+          "  pm.request.headers.add({ key: 'apikey', value: apikey });",
+          "}",
+          "const token = getVar('accessToken');",
+          "// Si todavía no hay sesión, se usa la anon key como bearer (acceso anónimo).",
+          "const bearer = (token && token.length) ? token : apikey;",
+          "if (bearer && !pm.request.headers.has('Authorization')) {",
+          "  pm.request.headers.add({ key: 'Authorization', value: 'Bearer ' + bearer });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "supabaseUrl", "value": "https://rikafvgarvjhnbkauxzi.supabase.co", "type": "string" },
+    { "key": "restUrl", "value": "{{supabaseUrl}}/rest/v1", "type": "string" },
+    { "key": "authUrl", "value": "{{supabaseUrl}}/auth/v1", "type": "string" },
+    { "key": "apikey", "value": "REEMPLAZAR_ANON_KEY", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "refreshToken", "value": "", "type": "string" },
+    { "key": "email", "value": "demo@borr.test", "type": "string" },
+    { "key": "password", "value": "demo-password-123", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "shopId", "value": "00000000-0000-0000-0000-000000000001", "type": "string" },
+    { "key": "pizzaId", "value": "10000000-0000-0000-0000-000000000001", "type": "string" },
+    { "key": "userPizzaId", "value": "", "type": "string" },
+    { "key": "addressId", "value": "", "type": "string" },
+    { "key": "orderId", "value": "", "type": "string" },
+    { "key": "orderItemId", "value": "", "type": "string" },
+    { "key": "deliveryId", "value": "", "type": "string" },
+    { "key": "ingredientId", "value": "mozza", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "01 · Auth (GoTrue)",
+      "description": "Endpoints de autenticación `/auth/v1`. enable_signup=true y confirmación de email off en dev (ver supabase/config.toml).",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{authUrl}}/signup",
+              "host": ["{{authUrl}}"],
+              "path": ["signup"]
+            },
+            "description": "Crea un usuario en auth.users. El trigger handle_new_user() crea automáticamente la fila en public.profiles (username = parte local del email)."
+          }
+        },
+        {
+          "name": "Signup anónimo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "  pm.collectionVariables.set('accessToken', json.access_token);",
+                  "  pm.collectionVariables.set('refreshToken', json.refresh_token);",
+                  "  if (json.user && json.user.id) pm.collectionVariables.set('userId', json.user.id);",
+                  "  console.log('Sesión anónima:', json.user && json.user.id, '· is_anonymous:', json.user && json.user.is_anonymous);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{authUrl}}/signup",
+              "host": ["{{authUrl}}"],
+              "path": ["signup"]
+            },
+            "description": "Sign-in anónimo: signup con body vacío. Devuelve una sesión para un usuario con is_anonymous=true (auth.uid() real). Habilita pedir sin login (el front lo consume vía POST /api/auth/anon del BFF). Requiere enable_anonymous_sign_ins=true (config.toml local; en cloud: Auth → Providers → Anonymous)."
+          }
+        },
+        {
+          "name": "Login (password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "  pm.collectionVariables.set('accessToken', json.access_token);",
+                  "  pm.collectionVariables.set('refreshToken', json.refresh_token);",
+                  "  if (json.user && json.user.id) pm.collectionVariables.set('userId', json.user.id);",
+                  "  console.log('Sesión guardada para', json.user && json.user.email);",
+                  "} else {",
+                  "  console.log('Login sin access_token:', JSON.stringify(json));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{authUrl}}/token?grant_type=password",
+              "host": ["{{authUrl}}"],
+              "path": ["token"],
+              "query": [
+                { "key": "grant_type", "value": "password" }
+              ]
+            },
+            "description": "Inicia sesión con email/password. El test script guarda access_token, refresh_token y userId en las variables de la colección para que el resto de requests autentiquen."
+          }
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{authUrl}}/token?grant_type=refresh_token",
+              "host": ["{{authUrl}}"],
+              "path": ["token"],
+              "query": [
+                { "key": "grant_type", "value": "refresh_token" }
+              ]
+            },
+            "description": "Renueva el access_token usando el refresh_token (jwt_expiry=3600s en config)."
+          }
+        },
+        {
+          "name": "Get current user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{authUrl}}/user",
+              "host": ["{{authUrl}}"],
+              "path": ["user"]
+            },
+            "description": "Devuelve el usuario asociado al access_token actual."
+          }
+        },
+        {
+          "name": "Update user",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": {\n    \"display_name\": \"Demo BoRR\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{authUrl}}/user",
+              "host": ["{{authUrl}}"],
+              "path": ["user"]
+            },
+            "description": "Actualiza el usuario autenticado (password, email o user_metadata vía `data`)."
+          }
+        },
+        {
+          "name": "Recover (reset password)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{authUrl}}/recover",
+              "host": ["{{authUrl}}"],
+              "path": ["recover"]
+            },
+            "description": "Dispara el email de recuperación de contraseña."
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{authUrl}}/logout",
+              "host": ["{{authUrl}}"],
+              "path": ["logout"]
+            },
+            "description": "Invalida la sesión actual (revoca el refresh token)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 · Catálogo público (read)",
+      "description": "Lecturas públicas (RLS: select usando active / is_public). Funcionan incluso anónimo (con la anon key como bearer).",
+      "item": [
+        {
+          "name": "Shops · activas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/shops?active=eq.true&select=*&order=name",
+              "host": ["{{restUrl}}"],
+              "path": ["shops"],
+              "query": [
+                { "key": "active", "value": "eq.true" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "name" }
+              ]
+            },
+            "description": "Sucursales activas. Policy: \"shops public read active\"."
+          }
+        },
+        {
+          "name": "Shop · por id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/shops?id=eq.{{shopId}}&select=*",
+              "host": ["{{restUrl}}"],
+              "path": ["shops"],
+              "query": [
+                { "key": "id", "value": "eq.{{shopId}}" },
+                { "key": "select", "value": "*" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Pizza bases · activas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizza_bases?active=eq.true&select=*&order=price_cents",
+              "host": ["{{restUrl}}"],
+              "path": ["pizza_bases"],
+              "query": [
+                { "key": "active", "value": "eq.true" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "price_cents" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ingredients · catálogo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/ingredients?active=eq.true&select=*&order=category,name",
+              "host": ["{{restUrl}}"],
+              "path": ["ingredients"],
+              "query": [
+                { "key": "active", "value": "eq.true" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "category,name" }
+              ]
+            },
+            "description": "Catálogo de ingredientes activos. Policy: \"ingredients public read active\"."
+          }
+        },
+        {
+          "name": "Ingredients · por categoría",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/ingredients?category=eq.Quesos&active=eq.true&select=*",
+              "host": ["{{restUrl}}"],
+              "path": ["ingredients"],
+              "query": [
+                { "key": "category", "value": "eq.Quesos" },
+                { "key": "active", "value": "eq.true" },
+                { "key": "select", "value": "*" }
+              ]
+            },
+            "description": "Filtra por enum ing_category: Base | Quesos | Carnes | Verdes | Hongos | Otros."
+          }
+        },
+        {
+          "name": "Pizzas · de la casa",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas?origin=eq.house&is_public=eq.true&deleted_at=is.null&select=*&order=created_at.desc",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"],
+              "query": [
+                { "key": "origin", "value": "eq.house" },
+                { "key": "is_public", "value": "eq.true" },
+                { "key": "deleted_at", "value": "is.null" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.desc" }
+              ]
+            },
+            "description": "Pizzas house publicadas. Policy: \"pizzas public read\"."
+          }
+        },
+        {
+          "name": "Pizzas · comunidad (+ autor)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas?origin=eq.user&is_public=eq.true&deleted_at=is.null&select=*,profiles_public(username,avatar_url)&order=created_at.desc&limit=20",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"],
+              "query": [
+                { "key": "origin", "value": "eq.user" },
+                { "key": "is_public", "value": "eq.true" },
+                { "key": "deleted_at", "value": "is.null" },
+                { "key": "select", "value": "*,profiles_public(username,avatar_url)" },
+                { "key": "order", "value": "created_at.desc" },
+                { "key": "limit", "value": "20" }
+              ]
+            },
+            "description": "Feed comunidad. El embed `profiles_public(...)` resuelve el autor sin exponer phone/role (FK pizzas.user_id → profiles.id de 0005)."
+          }
+        },
+        {
+          "name": "Pizzas · de la casa (vista feed) ★ usado por el front",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas_house_feed?select=*&order=created_at.asc",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas_house_feed"],
+              "query": [
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.asc" }
+              ]
+            },
+            "description": "Vista de 0006 que ya devuelve price_cents calculado en el back (price_recipe). El BFF (GET /api/pizzas/house) la consume con una sola query, sin enrichPizzas."
+          }
+        },
+        {
+          "name": "Pizzas · comunidad (vista feed) ★ usado por el front",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas_community_feed?select=*&order=created_at.desc&limit=30",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas_community_feed"],
+              "query": [
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.desc" },
+                { "key": "limit", "value": "30" }
+              ]
+            },
+            "description": "Vista de 0006 con price_cents + author_username (join a profiles_public). El BFF (GET /api/pizzas/community) la consume sin merge en memoria."
+          }
+        },
+        {
+          "name": "Pizza · por id (+ ingredientes)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas?id=eq.{{pizzaId}}&select=*,pizza_ingredients(*)",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"],
+              "query": [
+                { "key": "id", "value": "eq.{{pizzaId}}" },
+                { "key": "select", "value": "*,pizza_ingredients(*)" }
+              ]
+            },
+            "description": "Detalle de una pizza con su M:N de ingredientes (sincronizado por trigger desde recipe.items)."
+          }
+        },
+        {
+          "name": "profiles_public · por id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/profiles_public?id=eq.{{userId}}&select=*",
+              "host": ["{{restUrl}}"],
+              "path": ["profiles_public"],
+              "query": [
+                { "key": "id", "value": "eq.{{userId}}" },
+                { "key": "select", "value": "*" }
+              ]
+            },
+            "description": "Vista pública (username + avatar_url). Grant select a anon/authenticated."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 · Perfil",
+      "item": [
+        {
+          "name": "Mi perfil",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/profiles?select=*",
+              "host": ["{{restUrl}}"],
+              "path": ["profiles"],
+              "query": [
+                { "key": "select", "value": "*" }
+              ]
+            },
+            "description": "RLS \"profiles self read\" devuelve solo la fila propia (auth.uid() = id)."
+          }
+        },
+        {
+          "name": "Actualizar mi perfil",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"borr_demo\",\n  \"phone\": \"+54 9 11 5555-5555\",\n  \"avatar_url\": \"https://example.com/avatar.png\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/profiles?id=eq.{{userId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["profiles"],
+              "query": [
+                { "key": "id", "value": "eq.{{userId}}" }
+              ]
+            },
+            "description": "RLS \"profiles self update\". No se pueden cambiar role/points desde el cliente (controlado por backend/admin)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 · Direcciones",
+      "description": "RLS \"addresses owner all\": el dueño tiene CRUD completo sobre sus direcciones.",
+      "item": [
+        {
+          "name": "Mis direcciones",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/addresses?select=*&order=is_default.desc,created_at.desc",
+              "host": ["{{restUrl}}"],
+              "path": ["addresses"],
+              "query": [
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "is_default.desc,created_at.desc" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Crear dirección",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const a = pm.response.json();",
+                  "if (Array.isArray(a) && a[0] && a[0].id) pm.collectionVariables.set('addressId', a[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"label\": \"Casa\",\n  \"street\": \"Av. Siempreviva 742\",\n  \"city\": \"Springfield\",\n  \"notes\": \"Timbre B\",\n  \"location\": \"SRID=4326;POINT(-58.45 -34.6)\",\n  \"is_default\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/addresses",
+              "host": ["{{restUrl}}"],
+              "path": ["addresses"]
+            },
+            "description": "`location` es geography(Point,4326): se manda como EWKT `SRID=4326;POINT(lon lat)` o GeoJSON. Omitir si no hay coordenadas."
+          }
+        },
+        {
+          "name": "Actualizar dirección",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Dejar en portería\",\n  \"is_default\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/addresses?id=eq.{{addressId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["addresses"],
+              "query": [
+                { "key": "id", "value": "eq.{{addressId}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Borrar dirección",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/addresses?id=eq.{{addressId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["addresses"],
+              "query": [
+                { "key": "id", "value": "eq.{{addressId}}" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 · Pizzas (usuario)",
+      "description": "RLS: el dueño gestiona sus pizzas origin='user'. Insert/update fuerzan origin='user' y user_id = auth.uid().",
+      "item": [
+        {
+          "name": "Mis pizzas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas?user_id=eq.{{userId}}&deleted_at=is.null&select=*&order=created_at.desc",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"],
+              "query": [
+                { "key": "user_id", "value": "eq.{{userId}}" },
+                { "key": "deleted_at", "value": "is.null" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.desc" }
+              ]
+            },
+            "description": "RLS \"pizzas owner read\" devuelve todas las del dueño (incluso privadas)."
+          }
+        },
+        {
+          "name": "Crear pizza",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const p = pm.response.json();",
+                  "if (Array.isArray(p) && p[0] && p[0].id) pm.collectionVariables.set('userPizzaId', p[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"origin\": \"user\",\n  \"is_public\": false,\n  \"name\": \"Mi creación\",\n  \"base_id\": \"classic\",\n  \"size\": \"M\",\n  \"tags\": [\"propia\"],\n  \"recipe\": {\n    \"baseId\": \"classic\",\n    \"size\": \"M\",\n    \"version\": 2,\n    \"items\": [\n      { \"kind\": \"ing\", \"ingredientId\": \"masa\", \"qty\": 1 },\n      { \"kind\": \"ing\", \"ingredientId\": \"salsa\", \"qty\": 1 },\n      { \"kind\": \"ing\", \"ingredientId\": \"mozza\", \"qty\": 1 },\n      { \"kind\": \"ing\", \"ingredientId\": \"rucula\", \"qty\": 1 }\n    ]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/pizzas",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"]
+            },
+            "description": "El trigger pizzas_sync_ingredients llena pizza_ingredients desde recipe.items. `origin` debe ser 'user' (constraint + RLS owner insert)."
+          }
+        },
+        {
+          "name": "Actualizar pizza (publicar / editar)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mi creación v2\",\n  \"is_public\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/pizzas?id=eq.{{userPizzaId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"],
+              "query": [
+                { "key": "id", "value": "eq.{{userPizzaId}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Soft-delete pizza",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleted_at\": \"2026-06-22T00:00:00Z\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/pizzas?id=eq.{{userPizzaId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"],
+              "query": [
+                { "key": "id", "value": "eq.{{userPizzaId}}" }
+              ]
+            },
+            "description": "Soft-delete: marca deleted_at en vez de borrar (las pizzas pueden estar referenciadas por order_items)."
+          }
+        },
+        {
+          "name": "Borrar pizza (hard)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas?id=eq.{{userPizzaId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"],
+              "query": [
+                { "key": "id", "value": "eq.{{userPizzaId}}" }
+              ]
+            },
+            "description": "RLS \"pizzas owner delete\". order_items.pizza_id queda en NULL (on delete set null)."
+          }
+        },
+        {
+          "name": "pizza_ingredients · de una pizza",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizza_ingredients?pizza_id=eq.{{pizzaId}}&select=*&order=position",
+              "host": ["{{restUrl}}"],
+              "path": ["pizza_ingredients"],
+              "query": [
+                { "key": "pizza_id", "value": "eq.{{pizzaId}}" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "position" }
+              ]
+            },
+            "description": "RLS \"pizza_ingredients read via pizza\": visible si la pizza es pública, propia o sos admin."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 · Social (likes)",
+      "item": [
+        {
+          "name": "Likes de una pizza (count)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Prefer", "value": "count=exact" }
+            ],
+            "url": {
+              "raw": "{{restUrl}}/pizza_likes?pizza_id=eq.{{pizzaId}}&select=user_id",
+              "host": ["{{restUrl}}"],
+              "path": ["pizza_likes"],
+              "query": [
+                { "key": "pizza_id", "value": "eq.{{pizzaId}}" },
+                { "key": "select", "value": "user_id" }
+              ]
+            },
+            "description": "RLS \"pizza_likes public read\". El header Prefer: count=exact devuelve el total en Content-Range."
+          }
+        },
+        {
+          "name": "Dar like",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"pizza_id\": \"{{pizzaId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/pizza_likes",
+              "host": ["{{restUrl}}"],
+              "path": ["pizza_likes"]
+            },
+            "description": "RLS \"pizza_likes owner insert\" (user_id = auth.uid())."
+          }
+        },
+        {
+          "name": "Quitar like",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizza_likes?user_id=eq.{{userId}}&pizza_id=eq.{{pizzaId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["pizza_likes"],
+              "query": [
+                { "key": "user_id", "value": "eq.{{userId}}" },
+                { "key": "pizza_id", "value": "eq.{{pizzaId}}" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 · Pedidos",
+      "description": "RLS \"orders owner all\". El total_cents es columna generada (subtotal + delivery - discount). Los cambios de status disparan triggers (timeline + consumo de stock al pasar a 'preparing').\n\nLa app crea pedidos vía el RPC `place_order` (atómico, precio server-side). El flujo manual draft → order_items → placed queda para back-office/depuración.",
+      "item": [
+        {
+          "name": "Crear pedido (RPC place_order) ★ usado por el front",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const id = pm.response.json();",
+                  "if (typeof id === 'string' && id.length) {",
+                  "  pm.collectionVariables.set('orderId', id);",
+                  "  console.log('orderId (RPC):', id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"p_shop_id\": \"{{shopId}}\",\n  \"p_address_id\": null,\n  \"p_payment_method\": null,\n  \"p_notes\": \"Pedido de prueba (place_order)\",\n  \"p_items\": [\n    {\n      \"pizza_id\": \"{{pizzaId}}\",\n      \"qty\": 2,\n      \"recipe_snapshot\": { \"baseId\": \"classic\", \"size\": \"M\", \"version\": 2, \"items\": [\n        { \"kind\": \"ing\", \"ingredientId\": \"masa\", \"qty\": 1 },\n        { \"kind\": \"ing\", \"ingredientId\": \"salsa\", \"qty\": 1 },\n        { \"kind\": \"ing\", \"ingredientId\": \"mozza\", \"qty\": 1 },\n        { \"kind\": \"ing\", \"ingredientId\": \"albahaca\", \"qty\": 1 }\n      ] }\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/rpc/place_order",
+              "host": ["{{restUrl}}"],
+              "path": ["rpc", "place_order"]
+            },
+            "description": "RPC de 0006. Crea orders (status='placed', placed_at=now) + order_items en una sola transacción, calculando unit_price_cents server-side con price_recipe(recipe_snapshot). payment_method null = pago TODO. Devuelve el order_id. Sólo authenticated (incluye usuarios anónimos); el rol anon puro recibe 403. El BFF lo consume en POST /api/orders."
+          }
+        },
+        {
+          "name": "Mis pedidos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/orders?select=*&order=created_at.desc",
+              "host": ["{{restUrl}}"],
+              "path": ["orders"],
+              "query": [
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.desc" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Pedido · detalle completo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/orders?id=eq.{{orderId}}&select=*,order_items(*),order_status_events(*),deliveries(*)",
+              "host": ["{{restUrl}}"],
+              "path": ["orders"],
+              "query": [
+                { "key": "id", "value": "eq.{{orderId}}" },
+                { "key": "select", "value": "*,order_items(*),order_status_events(*),deliveries(*)" }
+              ]
+            },
+            "description": "Embebe líneas, timeline de estados y delivery en una sola query."
+          }
+        },
+        {
+          "name": "Crear pedido (draft)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const o = pm.response.json();",
+                  "if (Array.isArray(o) && o[0] && o[0].id) pm.collectionVariables.set('orderId', o[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"shop_id\": \"{{shopId}}\",\n  \"address_id\": null,\n  \"status\": \"draft\",\n  \"subtotal_cents\": 41200,\n  \"delivery_cents\": 5000,\n  \"discount_cents\": 0,\n  \"payment_method\": \"mercadopago\",\n  \"notes\": \"Sin picante\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/orders",
+              "host": ["{{restUrl}}"],
+              "path": ["orders"]
+            },
+            "description": "No mandar total_cents (es columna generada). payment_method: cash | card | mercadopago."
+          }
+        },
+        {
+          "name": "Agregar línea (order_item)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const i = pm.response.json();",
+                  "if (Array.isArray(i) && i[0] && i[0].id) pm.collectionVariables.set('orderItemId', i[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_id\": \"{{orderId}}\",\n  \"pizza_id\": \"{{pizzaId}}\",\n  \"qty\": 1,\n  \"unit_price_cents\": 41200,\n  \"recipe_snapshot\": {\n    \"baseId\": \"classic\",\n    \"size\": \"M\",\n    \"version\": 2,\n    \"items\": [\n      { \"kind\": \"ing\", \"ingredientId\": \"masa\", \"qty\": 1 },\n      { \"kind\": \"ing\", \"ingredientId\": \"salsa\", \"qty\": 1 },\n      { \"kind\": \"ing\", \"ingredientId\": \"mozza\", \"qty\": 1 },\n      { \"kind\": \"ing\", \"ingredientId\": \"albahaca\", \"qty\": 1 }\n    ]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/order_items",
+              "host": ["{{restUrl}}"],
+              "path": ["order_items"]
+            },
+            "description": "recipe_snapshot congela la receta al momento del pedido. line_total_cents es generada (qty * unit_price_cents)."
+          }
+        },
+        {
+          "name": "Confirmar pedido (placed)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"placed\",\n  \"placed_at\": \"2026-06-22T12:00:00Z\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/orders?id=eq.{{orderId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["orders"],
+              "query": [
+                { "key": "id", "value": "eq.{{orderId}}" }
+              ]
+            },
+            "description": "El cambio de status dispara record_order_status_change() → order_status_events. order_status: draft|placed|preparing|ready|delivering|delivered|cancelled."
+          }
+        },
+        {
+          "name": "Cancelar pedido",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"cancelled\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/orders?id=eq.{{orderId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["orders"],
+              "query": [
+                { "key": "id", "value": "eq.{{orderId}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Timeline de estados",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/order_status_events?order_id=eq.{{orderId}}&select=*&order=created_at",
+              "host": ["{{restUrl}}"],
+              "path": ["order_status_events"],
+              "query": [
+                { "key": "order_id", "value": "eq.{{orderId}}" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at" }
+              ]
+            },
+            "description": "RLS \"order_status_events via order\": visible para dueño, pizzero, admin o delivery asignado."
+          }
+        },
+        {
+          "name": "Consumo de stock del pedido",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/order_item_ingredients?order_item_id=eq.{{orderItemId}}&select=*",
+              "host": ["{{restUrl}}"],
+              "path": ["order_item_ingredients"],
+              "query": [
+                { "key": "order_item_id", "value": "eq.{{orderItemId}}" },
+                { "key": "select", "value": "*" }
+              ]
+            },
+            "description": "Materializado por trigger al pasar el pedido a 'preparing'. RLS \"order_item_ingredients via order_item\"."
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 · Delivery",
+      "description": "RLS por rol: el dueño ve su delivery, el courier el suyo (delivery), el pizzero todos. Tracking GPS en delivery_locations.",
+      "item": [
+        {
+          "name": "Deliveries (según rol)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/deliveries?select=*,orders(id,status)&order=route_seq",
+              "host": ["{{restUrl}}"],
+              "path": ["deliveries"],
+              "query": [
+                { "key": "select", "value": "*,orders(id,status)" },
+                { "key": "order", "value": "route_seq" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Actualizar delivery (courier)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"picked_up\",\n  \"picked_up_at\": \"2026-06-22T12:30:00Z\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/deliveries?id=eq.{{deliveryId}}",
+              "host": ["{{restUrl}}"],
+              "path": ["deliveries"],
+              "query": [
+                { "key": "id", "value": "eq.{{deliveryId}}" }
+              ]
+            },
+            "description": "RLS \"deliveries courier update assigned\". delivery_status: pending|assigned|picked_up|delivered|cancelled. Requiere rol 'delivery' y courier_id = auth.uid()."
+          }
+        },
+        {
+          "name": "Reportar ubicación GPS (courier)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delivery_id\": \"{{deliveryId}}\",\n  \"position\": \"SRID=4326;POINT(-58.452 -34.601)\",\n  \"heading\": 90.5,\n  \"speed\": 22.3\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/delivery_locations",
+              "host": ["{{restUrl}}"],
+              "path": ["delivery_locations"]
+            },
+            "description": "RLS \"delivery_locations courier insert\" (courier asignado al delivery). position es geography(Point,4326) en EWKT."
+          }
+        },
+        {
+          "name": "Última ubicación del delivery",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/delivery_locations?delivery_id=eq.{{deliveryId}}&select=*&order=recorded_at.desc&limit=1",
+              "host": ["{{restUrl}}"],
+              "path": ["delivery_locations"],
+              "query": [
+                { "key": "delivery_id", "value": "eq.{{deliveryId}}" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "recorded_at.desc" },
+                { "key": "limit", "value": "1" }
+              ]
+            },
+            "description": "RLS \"delivery_locations owner read via order\": el dueño del pedido ve la posición del repartidor."
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 · Stock (pizzero / admin)",
+      "description": "Lectura para pizzero/admin; escritura solo admin. Vista agregada ingredient_stock_by_shop (security_invoker).",
+      "item": [
+        {
+          "name": "Movimientos de stock",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/stock_movements?shop_id=eq.{{shopId}}&select=*&order=created_at.desc&limit=50",
+              "host": ["{{restUrl}}"],
+              "path": ["stock_movements"],
+              "query": [
+                { "key": "shop_id", "value": "eq.{{shopId}}" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.desc" },
+                { "key": "limit", "value": "50" }
+              ]
+            },
+            "description": "RLS: \"stock_movements pizzero read\" / \"stock_movements admin all\". Con rol customer devuelve vacío."
+          }
+        },
+        {
+          "name": "Stock on-hand por sucursal (vista)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/ingredient_stock_by_shop?shop_id=eq.{{shopId}}&select=*&order=qty_on_hand",
+              "host": ["{{restUrl}}"],
+              "path": ["ingredient_stock_by_shop"],
+              "query": [
+                { "key": "shop_id", "value": "eq.{{shopId}}" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "qty_on_hand" }
+              ]
+            },
+            "description": "Vista que suma deltas del ledger por (shop, ingredient). security_invoker=true: respeta la RLS de stock_movements del usuario."
+          }
+        },
+        {
+          "name": "Cargar stock (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shop_id\": \"{{shopId}}\",\n  \"ingredient_id\": \"{{ingredientId}}\",\n  \"delta\": 50,\n  \"reason\": \"purchase\",\n  \"note\": \"Reposición\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/stock_movements",
+              "host": ["{{restUrl}}"],
+              "path": ["stock_movements"]
+            },
+            "description": "RLS \"stock_movements admin all\". stock_reason: purchase|order|adjust|waste|return|transfer. delta positivo = ingreso, negativo = egreso."
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 · Gamificación",
+      "item": [
+        {
+          "name": "Achievements (catálogo)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/achievements?active=eq.true&select=*&order=points",
+              "host": ["{{restUrl}}"],
+              "path": ["achievements"],
+              "query": [
+                { "key": "active", "value": "eq.true" },
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "points" }
+              ]
+            },
+            "description": "RLS \"achievements public read\" (active)."
+          }
+        },
+        {
+          "name": "Mis logros desbloqueados",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/user_achievements?user_id=eq.{{userId}}&select=*,achievements(*)&order=unlocked_at.desc",
+              "host": ["{{restUrl}}"],
+              "path": ["user_achievements"],
+              "query": [
+                { "key": "user_id", "value": "eq.{{userId}}" },
+                { "key": "select", "value": "*,achievements(*)" },
+                { "key": "order", "value": "unlocked_at.desc" }
+              ]
+            },
+            "description": "Embebe el detalle del achievement. RLS self/public read."
+          }
+        },
+        {
+          "name": "Mi historial de puntos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/points_log?select=*&order=created_at.desc",
+              "host": ["{{restUrl}}"],
+              "path": ["points_log"],
+              "query": [
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.desc" }
+              ]
+            },
+            "description": "RLS \"points_log self read\" (auth.uid() = user_id)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 · Admin (escritura catálogo)",
+      "description": "Requieren rol 'admin' (public.is_role('admin')). Con otro rol devuelven error de policy.",
+      "item": [
+        {
+          "name": "Crear sucursal",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"BoRR Norte\",\n  \"address\": \"Av. del Libertador 5000\",\n  \"location\": \"SRID=4326;POINT(-58.42 -34.55)\",\n  \"phone\": \"+54 11 4000-0000\",\n  \"active\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/shops",
+              "host": ["{{restUrl}}"],
+              "path": ["shops"]
+            }
+          }
+        },
+        {
+          "name": "Upsert base de pizza",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation,resolution=merge-duplicates" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"napoletana\",\n  \"name\": \"Masa napoletana\",\n  \"description\": \"Cornicione alto\",\n  \"price_cents\": 1500,\n  \"active\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/pizza_bases",
+              "host": ["{{restUrl}}"],
+              "path": ["pizza_bases"]
+            },
+            "description": "Prefer: resolution=merge-duplicates hace upsert por PK (id text)."
+          }
+        },
+        {
+          "name": "Crear ingrediente",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"anchoa\",\n  \"name\": \"Anchoa\",\n  \"category\": \"Carnes\",\n  \"color\": \"#8A6B4A\",\n  \"price_cents\": 30000,\n  \"unit\": \"unit\",\n  \"step\": 1,\n  \"default_qty\": 1,\n  \"is_base\": false,\n  \"active\": true,\n  \"min_stock_qty\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/ingredients",
+              "host": ["{{restUrl}}"],
+              "path": ["ingredients"]
+            },
+            "description": "category: enum ing_category. unit: 'unit' | 'g'."
+          }
+        },
+        {
+          "name": "Crear achievement",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"night_owl\",\n  \"name\": \"Ave nocturna\",\n  \"description\": \"Pediste después de medianoche\",\n  \"points\": 60,\n  \"icon\": \"moon\",\n  \"active\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/achievements",
+              "host": ["{{restUrl}}"],
+              "path": ["achievements"]
+            }
+          }
+        },
+        {
+          "name": "Crear pizza de la casa (house)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Prefer", "value": "return=representation" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": null,\n  \"origin\": \"house\",\n  \"is_public\": true,\n  \"name\": \"Napolitana\",\n  \"base_id\": \"classic\",\n  \"size\": \"M\",\n  \"tags\": [\"casa\"],\n  \"recipe\": {\n    \"baseId\": \"classic\",\n    \"size\": \"M\",\n    \"version\": 2,\n    \"items\": [\n      { \"kind\": \"ing\", \"ingredientId\": \"masa\", \"qty\": 1 },\n      { \"kind\": \"ing\", \"ingredientId\": \"salsa\", \"qty\": 1 },\n      { \"kind\": \"ing\", \"ingredientId\": \"mozza\", \"qty\": 1 }\n    ]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/pizzas",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas"]
+            },
+            "description": "origin='house' exige user_id null (constraint) y rol admin (RLS \"pizzas admin all\")."
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 · RPC",
+      "description": "Solo se exponen las funciones con EXECUTE para authenticated. Las trigger-only (sync_pizza_ingredients, record_order_status_change, materialize_order_consumption, handle_new_user, touch_updated_at) tienen EXECUTE revocado (0004_security_fixes.sql).",
+      "item": [
+        {
+          "name": "current_app_role",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/rpc/current_app_role",
+              "host": ["{{restUrl}}"],
+              "path": ["rpc", "current_app_role"]
+            },
+            "description": "Devuelve el rol (user_role) del usuario autenticado leyendo public.profiles."
+          }
+        },
+        {
+          "name": "is_role",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"target\": \"admin\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/rpc/is_role",
+              "host": ["{{restUrl}}"],
+              "path": ["rpc", "is_role"]
+            },
+            "description": "true si el usuario actual tiene el rol indicado. target: customer|delivery|pizzero|admin. Usada internamente por las RLS policies."
+          }
+        }
+      ]
+    }
+  ]
+}
