@@ -28,6 +28,10 @@ site_url = "http://10.144.0.3:4321"
 additional_redirect_urls = ["http://10.144.0.3:4321", "http://10.144.0.2:8788"]
 jwt_expiry = 3600
 enable_signup = true
+# Pedidos sin login: el front hace sign-in anónimo (POST /api/auth/anon → GoTrue
+# /signup anónimo) y el pedido queda atado a un auth.uid() real (is_anonymous=true).
+# En CLOUD hay que activarlo también en Auth → Providers → Anonymous.
+enable_anonymous_sign_ins = true
 
 [auth.email]
 enable_signup = true
