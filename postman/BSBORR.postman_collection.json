@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b5b0bb00-0000-4000-8000-bsbo0rrcol01",
     "name": "BSBORR — Supabase API",
-    "description": "Colección de todos los endpoints expuestos por el backend Supabase de BoRR (BSBORR).\n\nFuente: `supabase/migrations/0001..0005`. Cubre:\n- **Auth (GoTrue)** `/auth/v1`: signup, login, refresh, user, logout, recover.\n- **REST (PostgREST)** `/rest/v1`: todas las tablas con RLS, más las vistas `ingredient_stock_by_shop` y `profiles_public`.\n- **RPC** `/rest/v1/rpc`: solo `current_app_role` e `is_role` (las funciones trigger-only tienen EXECUTE revocado en `0004_security_fixes.sql`, por eso NO están).\n\n## Uso\n1. Importá esta colección + un environment (`BSBORR.prod` para el cloud o `BSBORR.local` para el stack del CLI sobre ZeroTier).\n2. Completá `apikey` (anon key) en el environment. En prod sale de Project Settings → API; en local de `supabase status`.\n3. Ejecutá **01 · Auth → Login (password)**: guarda automáticamente `accessToken`, `refreshToken` y `userId` en las variables de la colección.\n4. El resto de los requests heredan `apikey` + `Authorization: Bearer {{accessToken}}` vía un pre-request script a nivel colección.\n\n> Recordá: el cliente real pasa por el BFF (BFFBORR), que reenvía el JWT. Esta colección habla directo con Supabase para probar/documentar el contrato. RLS aplica según el rol del usuario logueado.\n\n## Notas sobre RLS / roles\nMuchos endpoints requieren un rol concreto (`admin`, `pizzero`, `delivery`). Con un usuario `customer` recién creado, los requests de las carpetas **09 · Stock** y **11 · Admin** devolverán 0 filas (lectura) o error de policy (escritura). Eso es esperado: la policy filtra, no la URL.",
+    "description": "Colección de todos los endpoints expuestos por el backend Supabase de BoRR (BSBORR).\n\nFuente: `supabase/migrations/0001..0007`. Cubre:\n- **Auth (GoTrue)** `/auth/v1`: signup, signup anónimo, login, refresh, user, logout, recover.\n- **REST (PostgREST)** `/rest/v1`: todas las tablas con RLS, más las vistas `ingredient_stock_by_shop`, `profiles_public` y los feeds `pizzas_house_feed` / `pizzas_community_feed` (0006, con price_cents calculado en el back).\n- **RPC** `/rest/v1/rpc`: `current_app_role`, `is_role` y `place_order` (0006, creación atómica de pedido). Las funciones trigger-only tienen EXECUTE revocado en `0004_security_fixes.sql`, por eso NO están.\n\nLos requests marcados con ★ son los que consume el front (vía el BFF) en producción; ver `doc/endpoints-status.md` para implementados vs por finalizar.\n\n## Uso\n1. Importá esta colección + un environment (`BSBORR.prod` para el cloud o `BSBORR.local` para el stack del CLI).\n2. Completá `apikey` con la **anon key JWT** (`eyJ...`), NO la publishable key (`sb_publishable_...`): la colección la usa también como Bearer de fallback para el acceso anónimo, y sólo un JWT sirve ahí. En prod sale de Project Settings → API (legacy `anon`); en local de `supabase status` (campo ANON_KEY) — ya viene cargada en el env local.\n3. Ejecutá **01 · Auth → Login (password)** (o **Signup**): guarda automáticamente `accessToken`, `refreshToken` y `userId` en las variables de la colección.\n4. El resto de los requests heredan `apikey` + `Authorization: Bearer` vía un pre-request a nivel colección (precedencia: environment > colección).\n\n> Recordá: el cliente real pasa por el BFF (BFFBORR), que reenvía el JWT. Esta colección habla directo con Supabase para probar/documentar el contrato. RLS aplica según el rol del usuario logueado.\n\n## Notas sobre RLS / roles\nMuchos endpoints requieren un rol concreto (`admin`, `pizzero`, `delivery`). Con un usuario `customer` recién creado, los requests de **09 · Stock** y **11 · Admin** devuelven 403 (escritura) y los de **08 · Delivery** requieren un `deliveryId` de un delivery asignado. Eso es esperado: la policy filtra, no la URL.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -12,7 +12,7 @@
         "type": "text/javascript",
         "exec": [
           "// Inyecta apikey + Authorization en cada request (PostgREST y GoTrue los requieren).",
-          "const getVar = (k) => pm.collectionVariables.get(k) || pm.environment.get(k);",
+          "const getVar = (k) => pm.environment.get(k) || pm.collectionVariables.get(k);",
           "const apikey = getVar('apikey');",
           "if (apikey && !pm.request.headers.has('apikey')) {",
           "  pm.request.headers.add({ key: 'apikey', value: apikey });",
@@ -69,6 +69,43 @@
               "path": ["signup"]
             },
             "description": "Crea un usuario en auth.users. El trigger handle_new_user() crea automáticamente la fila en public.profiles (username = parte local del email)."
+          }
+        },
+        {
+          "name": "Signup anónimo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "  pm.collectionVariables.set('accessToken', json.access_token);",
+                  "  pm.collectionVariables.set('refreshToken', json.refresh_token);",
+                  "  if (json.user && json.user.id) pm.collectionVariables.set('userId', json.user.id);",
+                  "  console.log('Sesión anónima:', json.user && json.user.id, '· is_anonymous:', json.user && json.user.is_anonymous);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{authUrl}}/signup",
+              "host": ["{{authUrl}}"],
+              "path": ["signup"]
+            },
+            "description": "Sign-in anónimo: signup con body vacío. Devuelve una sesión para un usuario con is_anonymous=true (auth.uid() real). Habilita pedir sin login (el front lo consume vía POST /api/auth/anon del BFF). Requiere enable_anonymous_sign_ins=true (config.toml local; en cloud: Auth → Providers → Anonymous)."
           }
         },
         {
@@ -341,6 +378,41 @@
               ]
             },
             "description": "Feed comunidad. El embed `profiles_public(...)` resuelve el autor sin exponer phone/role (FK pizzas.user_id → profiles.id de 0005)."
+          }
+        },
+        {
+          "name": "Pizzas · de la casa (vista feed) ★ usado por el front",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas_house_feed?select=*&order=created_at.asc",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas_house_feed"],
+              "query": [
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.asc" }
+              ]
+            },
+            "description": "Vista de 0006 que ya devuelve price_cents calculado en el back (price_recipe). El BFF (GET /api/pizzas/house) la consume con una sola query, sin enrichPizzas."
+          }
+        },
+        {
+          "name": "Pizzas · comunidad (vista feed) ★ usado por el front",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{restUrl}}/pizzas_community_feed?select=*&order=created_at.desc&limit=30",
+              "host": ["{{restUrl}}"],
+              "path": ["pizzas_community_feed"],
+              "query": [
+                { "key": "select", "value": "*" },
+                { "key": "order", "value": "created_at.desc" },
+                { "key": "limit", "value": "30" }
+              ]
+            },
+            "description": "Vista de 0006 con price_cents + author_username (join a profiles_public). El BFF (GET /api/pizzas/community) la consume sin merge en memoria."
           }
         },
         {
@@ -719,8 +791,43 @@
     },
     {
       "name": "07 · Pedidos",
-      "description": "RLS \"orders owner all\". El total_cents es columna generada (subtotal + delivery - discount). Los cambios de status disparan triggers (timeline + consumo de stock al pasar a 'preparing').",
+      "description": "RLS \"orders owner all\". El total_cents es columna generada (subtotal + delivery - discount). Los cambios de status disparan triggers (timeline + consumo de stock al pasar a 'preparing').\n\nLa app crea pedidos vía el RPC `place_order` (atómico, precio server-side). El flujo manual draft → order_items → placed queda para back-office/depuración.",
       "item": [
+        {
+          "name": "Crear pedido (RPC place_order) ★ usado por el front",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const id = pm.response.json();",
+                  "if (typeof id === 'string' && id.length) {",
+                  "  pm.collectionVariables.set('orderId', id);",
+                  "  console.log('orderId (RPC):', id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"p_shop_id\": \"{{shopId}}\",\n  \"p_address_id\": null,\n  \"p_payment_method\": null,\n  \"p_notes\": \"Pedido de prueba (place_order)\",\n  \"p_items\": [\n    {\n      \"pizza_id\": \"{{pizzaId}}\",\n      \"qty\": 2,\n      \"recipe_snapshot\": { \"baseId\": \"classic\", \"size\": \"M\", \"version\": 2, \"items\": [\n        { \"kind\": \"ing\", \"ingredientId\": \"masa\", \"qty\": 1 },\n        { \"kind\": \"ing\", \"ingredientId\": \"salsa\", \"qty\": 1 },\n        { \"kind\": \"ing\", \"ingredientId\": \"mozza\", \"qty\": 1 },\n        { \"kind\": \"ing\", \"ingredientId\": \"albahaca\", \"qty\": 1 }\n      ] }\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{restUrl}}/rpc/place_order",
+              "host": ["{{restUrl}}"],
+              "path": ["rpc", "place_order"]
+            },
+            "description": "RPC de 0006. Crea orders (status='placed', placed_at=now) + order_items en una sola transacción, calculando unit_price_cents server-side con price_recipe(recipe_snapshot). payment_method null = pago TODO. Devuelve el order_id. Sólo authenticated (incluye usuarios anónimos); el rol anon puro recibe 403. El BFF lo consume en POST /api/orders."
+          }
+        },
         {
           "name": "Mis pedidos",
           "request": {
@@ -776,7 +883,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"shop_id\": \"{{shopId}}\",\n  \"address_id\": \"{{addressId}}\",\n  \"status\": \"draft\",\n  \"subtotal_cents\": 41200,\n  \"delivery_cents\": 5000,\n  \"discount_cents\": 0,\n  \"payment_method\": \"mercadopago\",\n  \"notes\": \"Sin picante\"\n}",
+              "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"shop_id\": \"{{shopId}}\",\n  \"address_id\": null,\n  \"status\": \"draft\",\n  \"subtotal_cents\": 41200,\n  \"delivery_cents\": 5000,\n  \"discount_cents\": 0,\n  \"payment_method\": \"mercadopago\",\n  \"notes\": \"Sin picante\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
