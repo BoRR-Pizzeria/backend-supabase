@@ -13,18 +13,27 @@ Colección con **todos los endpoints expuestos por el backend Supabase de BoRR**
 ## Setup
 
 1. **Importar** en Postman la colección + un environment.
-2. Cargar `apikey` (anon key) en el environment elegido:
-   - **prod**: Project Settings → API → `anon public`.
-   - **local**: salida de `supabase status` (campo `anon key`).
-3. Activar el environment y ejecutar **`01 · Auth → Login (password)`**. El test script guarda `accessToken`, `refreshToken` y `userId` en las variables de la colección; el resto de los requests autentican solos vía un pre-request script a nivel colección que inyecta `apikey` + `Authorization: Bearer`.
+2. Cargar `apikey` en el environment elegido — **usar la anon key JWT** (`eyJ...`), NO la publishable (`sb_publishable_...`):
+   - **prod**: Project Settings → API → `anon public` (legacy JWT).
+   - **local**: salida de `supabase status -o env` (campo `ANON_KEY`). Ya viene cargada en `BSBORR.local`.
+   - **Por qué JWT y no publishable**: la colección usa la `apikey` también como `Bearer` de fallback para el acceso anónimo, y PostgREST/GoTrue sólo aceptan un JWT en `Authorization`. La publishable key da `401`.
+3. Activar el environment y ejecutar **`01 · Auth → Login (password)`** (o **`Signup`**). El test script guarda `accessToken`, `refreshToken` y `userId` en variables de **colección**; el resto de los requests autentican solos vía un pre-request a nivel colección que inyecta `apikey` + `Authorization: Bearer` (precedencia: **environment > colección**).
 
 > Si todavía no hiciste login, los requests usan la `anon key` como bearer (acceso anónimo) — sirve para las lecturas públicas de la carpeta `02 · Catálogo`.
 
+### Correr con newman (CLI)
+
+```bash
+npx newman run BSBORR.postman_collection.json \
+  -e BSBORR.local.postman_environment.json \
+  --env-var "supabaseUrl=http://127.0.0.1:54321"   # si tu stack local no está en la IP del env
+```
+
 ## Estructura
 
-- **01 · Auth (GoTrue)** `/auth/v1` — signup, login, refresh, user, recover, logout.
-- **02 · Catálogo público** — shops, pizza_bases, ingredients, pizzas (house/comunidad), vistas `profiles_public`.
-- **03–07** — perfil, direcciones, pizzas del usuario, likes, pedidos (con triggers de timeline y consumo de stock).
+- **01 · Auth (GoTrue)** `/auth/v1` — signup, **signup anónimo**, login, refresh, user, recover, logout.
+- **02 · Catálogo público** — shops, pizza_bases, ingredients, pizzas (house/comunidad), las **vistas feed `pizzas_house_feed` / `pizzas_community_feed`** (★ usadas por el front, con `price_cents` del back) y `profiles_public`.
+- **03–07** — perfil, direcciones, pizzas del usuario, likes, pedidos. El pedido real se crea con el **RPC `place_order`** (★, atómico); el flujo manual draft → order_items → placed queda para back-office.
 - **08 · Delivery** — deliveries + tracking GPS (`delivery_locations`).
 - **09 · Stock** — `stock_movements` + vista `ingredient_stock_by_shop` (rol pizzero/admin).
 - **10 · Gamificación** — achievements, user_achievements, points_log.
