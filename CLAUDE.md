@@ -10,7 +10,7 @@ Backend de datos de BoRR: esquema Postgres/Supabase (migraciones, seed, RLS, tri
 
 ## Skills y MCP
 
-- Skills del dominio en [`.agents/skills/`](./.agents/skills/) (`supabase`, `supabase-postgres-best-practices`) — se trackean en git. Para que Claude Code las detecte, crear localmente el symlink `.claude/skills → ../.agents/skills` (`.claude/` está gitignoreado).
+- Skills del dominio en [`.claude/skills/`](./.claude/skills/) (`supabase`, `supabase-postgres-best-practices`) — trackeadas en git y detectadas automáticamente por Claude Code. Solo `.claude/settings.local.json` queda fuera de git.
 - MCP en [`.mcp.json`](./.mcp.json): servidor `supabase` del proyecto.
 
 ## Convenciones

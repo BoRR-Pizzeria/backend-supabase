@@ -19,5 +19,5 @@ npm-debug.log*
 .vscode/
 .idea/
 
-# Claude (symlinks + settings locales). Las skills (.agents/) SÍ se trackean.
-.claude/
+# Claude: solo settings locales fuera de git; .claude/skills/ SÍ se trackea.
+.claude/settings.local.json
