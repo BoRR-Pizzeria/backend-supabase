@@ -60,7 +60,7 @@ docs/
   der.md                     ← modelo entidad-relación (tablas, enums, triggers)
   decisiones-modelo-datos.md ← razonamiento detrás de cada decisión del modelo
   ejemplos/pedido-mixto.md   ← ejemplo concreto de pedido mixto
-.agents/skills/              ← skills del dominio (supabase, supabase-postgres-best-practices)
+.claude/skills/              ← skills del dominio (supabase, supabase-postgres-best-practices)
 ```
 
 Ver [`supabase/README.md`](./supabase/README.md) para el detalle de migraciones, seed, env y verificación.
