@@ -1,14 +1,14 @@
-# BSBORR — Backend Supabase BoRR
+# backend-supabase — Backend Supabase de BoRR
 
-Backend de datos del ecosistema **BoRR** (pizzería digital). Contiene el schema completo de Postgres/Supabase: migraciones, seed, RLS, triggers y realtime.
+Backend de datos del ecosistema **BoRR** (pizzería digital). Contiene el schema completo de Postgres/Supabase: migraciones, seed, RLS, triggers y realtime. La arquitectura general de la organización está en [.github/docs](https://github.com/BoRR-Pizzeria/.github/blob/main/docs/README.md).
 
-Forma parte del split en 3 repos:
+Forma parte del split en 3 repos (ex FFBORR / BFFBORR / BSBORR):
 
-- **FFBORR** — front (Astro + React islands).
-- **BFFBORR** — backend-for-frontend / gateway en Cloudflare Pages + Workers (toda la app pasa por acá, maneja cache y reenvía el JWT del usuario a Supabase).
-- **BSBORR** — este repo: el backend Supabase.
+- **[front-clientes-web](https://github.com/BoRR-Pizzeria/front-clientes-web)** — front (Astro + React islands).
+- **[bff-clientes](https://github.com/BoRR-Pizzeria/bff-clientes)** — backend-for-frontend / gateway en Cloudflare Workers (toda la app pasa por acá, maneja cache y reenvía el JWT del usuario a Supabase).
+- **backend-supabase** — este repo: el backend Supabase.
 
-> El cliente **nunca** habla directo con este backend en el nuevo stack: pasa por el BFF (BFFBORR), que reenvía el JWT del usuario para que **RLS** siga aplicando por usuario.
+> El cliente **nunca** habla directo con este backend: pasa por el BFF (bff-clientes), que reenvía el JWT del usuario para que **RLS** siga aplicando por usuario.
 
 ## Proyecto Supabase
 
@@ -18,7 +18,7 @@ Forma parte del split en 3 repos:
 ### Dev local sobre ZeroTier (nodo 10.144.0.1)
 
 El stack local lo configura [`supabase/config.toml`](./supabase/config.toml) (API en `:54321`,
-confirmación de email off para dev). El **BFF (BFFBORR)** apunta a `http://10.144.0.1:54321`.
+confirmación de email off para dev). El **BFF (bff-clientes)** apunta a `http://10.144.0.1:54321`.
 
 ```bash
 supabase start            # levanta el stack local (Docker)
@@ -38,7 +38,7 @@ Si da timeout (el CLI quedó atado a `127.0.0.1`), reenviá el puerto en el nodo
 socat TCP-LISTEN:54321,fork,reuseaddr,bind=10.144.0.1 TCP:127.0.0.1:54321
 ```
 
-> La anon key local default del CLI ya está pre-cargada en `BFFBORR/.env.example`. Si tu
+> La anon key local default del CLI ya está pre-cargada en `bff-clientes/.env.example`. Si tu
 > `supabase status` muestra otra (JWT secret distinto), reemplazala en el `.env`/`.dev.vars` del BFF.
 
 ### Prod (cloud)
@@ -53,17 +53,22 @@ supabase db reset --linked # resetea y reaplica todo + seed (¡destructivo!)
 
 ```
 supabase/
-  migrations/   ← 0001..0005 (init, triggers, realtime, security fixes, profiles_public view)
+  migrations/   ← 0001..0007 (init, triggers, realtime, security fixes, vistas de feed y RPC de pedido)
   seed.sql      ← datos iniciales (sucursal, bases, ingredientes, pizzas de la casa, stock, achievements)
   README.md     ← setup paso a paso del backend
-doc/
-  der.md                 ← modelo entidad-relación (tablas, enums, triggers)
-  decisiones-de-diseno.md
-  integracion-supabase.md
-  ejemplos/pedido-mixto.md
+docs/
+  der.md                     ← modelo entidad-relación (tablas, enums, triggers)
+  decisiones-modelo-datos.md ← razonamiento detrás de cada decisión del modelo
+  ejemplos/pedido-mixto.md   ← ejemplo concreto de pedido mixto
+.agents/skills/              ← skills del dominio (supabase, supabase-postgres-best-practices)
 ```
 
 Ver [`supabase/README.md`](./supabase/README.md) para el detalle de migraciones, seed, env y verificación.
+
+## Documentación
+
+- [`docs/`](./docs/README.md) — modelo de datos y decisiones de este repo.
+- [Docs de la organización](https://github.com/BoRR-Pizzeria/.github/blob/main/docs/README.md) — arquitectura, dominios, flujos y ADRs transversales.
 
 ## Variables de entorno
 
